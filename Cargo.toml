@@ -11,6 +11,7 @@ rust-version = "1.99"
 ammonia = "4.1.2"
 comrak = { version = "0.56.0", default-features = false, features = ["syntect"] }
 hex = "0.4.3"
+hayagriva = { version = "0.10.1", default-features = false, features = ["archive", "csl-json"] }
 mermaid-rs-renderer = { version = "0.3.1", default-features = false }
 pulldown-latex = "0.8.0"
 serde = { version = "1.0.228", features = ["derive"] }

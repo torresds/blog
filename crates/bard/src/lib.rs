@@ -11,6 +11,8 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
+mod citations;
+
 pub const SCHEMA_VERSION: u32 = 1;
 const MAX_SOURCE_BYTES: usize = 2_000_000;
 const MAX_OUTPUT_BYTES: usize = 20_000_000;
@@ -23,6 +25,8 @@ pub struct CompileRequest {
     pub schema_version: u32,
     pub source: String,
     pub locale: String,
+    #[serde(default)]
+    pub citation_style: Option<String>,
     pub document: Document,
     #[serde(default)]
     pub references: Vec<Reference>,
@@ -90,6 +94,10 @@ pub enum BardError {
     SourceTooLarge,
     #[error("document title must not be empty")]
     EmptyTitle,
+    #[error("unsupported citation style: {0}")]
+    CitationStyle(String),
+    #[error("invalid CSL JSON for reference '{key}': {message}")]
+    Reference { key: String, message: String },
     #[error("generated output exceeds the {MAX_OUTPUT_BYTES}-byte limit")]
     OutputTooLarge,
     #[error("raw HTML is not allowed (line {line})")]
@@ -123,9 +131,11 @@ pub fn compile(request: CompileRequest, output_dir: &Path) -> Result<Manifest, B
         return Err(BardError::RawHtml { line });
     }
 
+    let mut diagnostics = Vec::new();
+    let citations = citations::prepare(root, &request, &mut diagnostics)?;
+
     let diagrams = MermaidRenderer::new(output_dir);
     let mut toc = Vec::new();
-    let mut diagnostics = Vec::new();
     let mut anchorizer = comrak::Anchorizer::new();
     let syntax_set = syntect::parsing::SyntaxSet::load_defaults_newlines();
     for node in root.descendants() {
@@ -191,6 +201,8 @@ pub fn compile(request: CompileRequest, output_dir: &Path) -> Result<Manifest, B
     let mut rendered_html = String::new();
     comrak::html::format_document_with_plugins(root, &options, &mut rendered_html, &plugins)
         .map_err(|_| BardError::Format)?;
+    let citation_style_id = citations.style_id().to_owned();
+    let rendered_html = citations.apply(rendered_html);
     let safe_html = sanitize_html(&rendered_html);
     let safe_html = format!(
         "<article class=\"bard-article\" lang=\"{}\">{safe_html}</article>",
@@ -240,6 +252,7 @@ pub fn compile(request: CompileRequest, output_dir: &Path) -> Result<Manifest, B
         digest(include_str!("../../../Cargo.lock").as_bytes()),
         &request.source,
         &request.locale,
+        &citation_style_id,
         &request.document,
         &request.references,
         &manifest_files,
@@ -578,8 +591,9 @@ fn sanitize_svg(svg: &str) -> String {
 fn sanitize_html(html: &str) -> String {
     let mut builder = ammonia::Builder::default();
     builder
-        .add_generic_attributes(["class", "id"])
+        .add_generic_attributes(["class", "id", "role", "aria-labelledby"])
         .add_tags([
+            "section",
             "input",
             "math",
             "mi",

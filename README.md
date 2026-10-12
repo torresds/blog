@@ -29,7 +29,7 @@ flowchart TB
 
 | Component | Purpose |
 |:--|:--|
-| **Bard** | Compiles Markdown into styled HTML and static presentation assets. |
+| **Bard** | Compiles Markdown, IEEE-default CSL citations, and diagrams into styled HTML and static assets. |
 | **Librarian** | Owns articles, bibliography, immutable revisions, artifacts, and publication state. |
 | **Atelier** | Private Markdown-first writing and preview interface. |
 | **Herald** | Serves the site, authenticates the author, and coordinates publication. |

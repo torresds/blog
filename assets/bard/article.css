@@ -41,3 +41,22 @@
 .bard-article .footnote-definition {
   font-size: 0.9em;
 }
+
+.bard-citation {
+  white-space: nowrap;
+}
+
+.bard-bibliography {
+  margin-block-start: 3rem;
+}
+
+.bard-bibliography-list {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.bard-bibliography-entry {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.75rem;
+}

@@ -9,6 +9,7 @@ rust-version.workspace = true
 ammonia.workspace = true
 comrak.workspace = true
 hex.workspace = true
+hayagriva.workspace = true
 mermaid-rs-renderer.workspace = true
 pulldown-latex.workspace = true
 serde.workspace = true

@@ -1,7 +1,23 @@
 {
   "schema_version": 1,
-  "source": "# A first article\n\nThis paragraph renders without JavaScript.\n\n| language | role |\n| --- | --- |\n| Rust | compiler |",
+  "source": "# A first article\n\nThis paragraph renders without JavaScript. See [@rust-book].\n\n| language | role |\n| --- | --- |\n| Rust | compiler |",
   "locale": "en-US",
+  "citation_style": "ieee",
   "document": { "title": "A first article", "slug": "first-article", "revision_id": "rev_01" },
-  "references": []
+  "references": [
+    {
+      "key": "rust-book",
+      "revision_id": "ref_01",
+      "csl_json": {
+        "type": "book",
+        "title": "The Rust Programming Language",
+        "author": [
+          { "family": "Klabnik", "given": "Steve" },
+          { "family": "Nichols", "given": "Carol" }
+        ],
+        "issued": { "date-parts": [[2023]] },
+        "publisher": "No Starch Press"
+      }
+    }
+  ]
 }

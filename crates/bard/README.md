@@ -1,6 +1,6 @@
 # Bard
 
-Bard compiles Markdown into static article HTML, CSS, and generated assets. The library and CLI run in Rust; the CLI needs no Node, database, browser, or network access at runtime.
+Bard compiles Markdown into static article HTML, CSS, citations, diagrams, and generated assets. The library and CLI run in Rust; the CLI needs no Node, database, browser, or network access at runtime.
 
 ## Run
 
@@ -18,7 +18,8 @@ The CLI reads one JSON request from stdin and writes one JSON manifest to stdout
 - CommonMark/GFM tables, task lists, strikethrough, autolinks, and footnotes.
 - Dollar math compiled to MathML Core.
 - Fenced code highlighting through Syntect with an embedded stylesheet.
+- Pandoc-style bracketed citations and locators rendered by Hayagriva; IEEE is the default, and `citation_style` selects another bundled CSL style.
 - Mermaid flowcharts and other supported diagrams compiled to sanitized SVG.
 - Raw HTML rejection, generated HTML/SVG sanitization, output hashes, and a deterministic fingerprint.
 
-CSL citation parsing, supported citation styles, and some Mermaid syntax families remain open in `artifacts/specs/SPEC-003-BARD.md`. Invalid render inputs are reported in manifest diagnostics with source positions when available.
+The optional request field `citation_style` defaults to `ieee`. Style identifiers are resolved through Hayagriva's archive so new bundled styles can be enabled without changing the request shape. Invalid citation keys and unsupported styles produce diagnostics or request errors. Citation and bibliography HTML is sanitized with the article output.

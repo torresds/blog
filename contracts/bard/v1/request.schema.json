@@ -9,6 +9,14 @@
     "schema_version": { "const": 1 },
     "source": { "type": "string", "maxLength": 2000000 },
     "locale": { "enum": ["pt-BR", "en-US"] },
+    "citation_style": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 120,
+      "pattern": "^[a-z0-9-]+$",
+      "default": "ieee",
+      "description": "Hayagriva archived CSL style ID; defaults to IEEE."
+    },
     "document": {
       "type": "object",
       "additionalProperties": false,
