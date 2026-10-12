@@ -1,0 +1,43 @@
+.bard-article {
+  color: #202124;
+  font-family: Georgia, "Times New Roman", serif;
+  line-height: 1.7;
+  margin-inline: auto;
+  max-width: 72ch;
+}
+
+.bard-article img,
+.bard-article svg {
+  max-width: 100%;
+}
+
+.bard-article pre,
+.bard-article code {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+
+.bard-article pre {
+  overflow-x: auto;
+  padding: 1rem;
+}
+
+.bard-article table {
+  border-collapse: collapse;
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.bard-article th,
+.bard-article td {
+  border: 1px solid currentColor;
+  padding: 0.35rem 0.65rem;
+}
+
+.bard-article .task-list-item {
+  list-style: none;
+}
+
+.bard-article .footnote-definition {
+  font-size: 0.9em;
+}

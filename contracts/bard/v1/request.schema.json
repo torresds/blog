@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:blog:bard:v1:request",
+  "title": "Bard compile request v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "source", "locale", "document"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "source": { "type": "string", "maxLength": 2000000 },
+    "locale": { "enum": ["pt-BR", "en-US"] },
+    "document": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["title"],
+      "properties": {
+        "title": { "type": "string", "minLength": 1, "maxLength": 500 },
+        "slug": { "type": "string", "maxLength": 200 },
+        "revision_id": { "type": "string", "maxLength": 200 }
+      }
+    },
+    "references": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["key", "revision_id", "csl_json"],
+        "properties": {
+          "key": { "type": "string", "minLength": 1, "maxLength": 200 },
+          "revision_id": { "type": "string", "minLength": 1, "maxLength": 200 },
+          "csl_json": { "type": "object" }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "schema_version": 1,
+  "source": "# A first article\n\nThis paragraph renders without JavaScript.\n\n| language | role |\n| --- | --- |\n| Rust | compiler |",
+  "locale": "en-US",
+  "document": { "title": "A first article", "slug": "first-article", "revision_id": "rev_01" },
+  "references": []
+}
