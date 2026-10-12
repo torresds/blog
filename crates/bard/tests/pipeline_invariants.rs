@@ -172,3 +172,53 @@ fn invalid_mermaid_remains_a_recoverable_diagnostic_with_fallback_output() {
             .any(|file| file.media_type == "image/svg+xml")
     );
 }
+
+#[test]
+fn repeated_and_distinct_diagrams_compile_deterministically_in_an_exclusive_directory() {
+    let temp = tempfile::tempdir().unwrap();
+    let first_dir = temp.path().join("first");
+    let second_dir = temp.path().join("second");
+    let mut input = request();
+    input.source = concat!(
+        "# Diagrams\n\n",
+        "```mermaid\nflowchart LR\n A --> B\n```\n\n",
+        "```mermaid\nflowchart LR\n A --> B\n```\n\n",
+        "```mermaid\nsequenceDiagram\n Alice->>Bob: Hello\n```\n",
+    )
+    .to_owned();
+
+    let first = compile(input.clone(), &first_dir).unwrap();
+    let second = compile(input, &second_dir).unwrap();
+    let assets = first
+        .files
+        .iter()
+        .filter(|file| file.media_type == "image/svg+xml")
+        .collect::<Vec<_>>();
+    let html = fs::read_to_string(first_dir.join("article.html")).unwrap();
+
+    assert_eq!(assets.len(), 2, "identical SVG assets are stored once");
+    assert_eq!(html.matches("class=\"bard-diagram\"").count(), 3);
+    assert_eq!(first.fingerprint, second.fingerprint);
+    assert_eq!(
+        first
+            .files
+            .iter()
+            .map(|file| (&file.path, &file.sha256))
+            .collect::<Vec<_>>(),
+        second
+            .files
+            .iter()
+            .map(|file| (&file.path, &file.sha256))
+            .collect::<Vec<_>>()
+    );
+    for file in &first.files {
+        assert!(first_dir.join(&file.path).is_file());
+    }
+    assert!(fs::read_dir(&first_dir).unwrap().all(|entry| {
+        !entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with(".bard-stage-")
+    }));
+}

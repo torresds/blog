@@ -134,8 +134,10 @@ pub enum BardError {
     SyntaxThemeMissing(&'static str),
     #[error("generating Syntect CSS failed: {0}")]
     SyntaxCss(#[source] syntect::Error),
-    #[error("Mermaid renderer state was poisoned")]
-    RendererStatePoisoned,
+    #[error("Mermaid renderer state mutex was poisoned")]
+    MermaidRendererPoisoned,
+    #[error("Mermaid generated conflicting contents for asset '{path}'")]
+    MermaidAssetConflict { path: String },
     #[error("output persistence failed during {operation} at '{path}': {source}{rollback_note}", rollback_note = rollback.as_ref().map(|message| format!("; rollback also failed: {message}")).unwrap_or_default())]
     OutputPersistence {
         operation: &'static str,
@@ -425,6 +427,8 @@ fn output_io_error(operation: &'static str, path: &Path, source: std::io::Error)
     }
 }
 
+/// Compile into an output directory exclusively owned by this compilation.
+/// Callers must keep concurrent readers and other compiles away until it returns.
 pub fn compile(request: CompileRequest, output_dir: &Path) -> Result<Manifest, BardError> {
     validate_request(&request)?;
 
@@ -688,8 +692,32 @@ struct MermaidRenderer {
 
 #[derive(Default)]
 struct MermaidState {
-    generated: Vec<(String, String, String)>,
+    generated: BTreeMap<String, (String, String)>,
     diagnostics: Vec<Diagnostic>,
+    failure: Option<MermaidFailure>,
+}
+
+#[derive(Debug)]
+enum MermaidFailure {
+    AssetConflict { path: String },
+}
+
+impl MermaidState {
+    fn insert_asset(
+        &mut self,
+        path: String,
+        media_type: String,
+        contents: String,
+    ) -> Result<(), MermaidFailure> {
+        if let Some((existing_media_type, existing_contents)) = self.generated.get(&path) {
+            if existing_media_type != &media_type || existing_contents != &contents {
+                return Err(MermaidFailure::AssetConflict { path });
+            }
+            return Ok(());
+        }
+        self.generated.insert(path, (media_type, contents));
+        Ok(())
+    }
 }
 
 struct DiagramOutput {
@@ -705,12 +733,21 @@ impl MermaidRenderer {
     }
 
     fn finish(self) -> Result<DiagramOutput, BardError> {
-        let state = self
-            .state
-            .into_inner()
-            .map_err(|_| BardError::RendererStatePoisoned)?;
+        let state = match self.state.into_inner() {
+            Ok(state) => state,
+            Err(_) => return Err(BardError::MermaidRendererPoisoned),
+        };
+        if let Some(failure) = state.failure {
+            return Err(match failure {
+                MermaidFailure::AssetConflict { path } => BardError::MermaidAssetConflict { path },
+            });
+        }
         Ok(DiagramOutput {
-            files: state.generated,
+            files: state
+                .generated
+                .into_iter()
+                .map(|(path, (media_type, contents))| (path, media_type, contents))
+                .collect(),
             diagnostics: state.diagnostics,
         })
     }
@@ -749,11 +786,15 @@ impl comrak::adapters::CodefenceRendererAdapter for MermaidRenderer {
                 let safe_svg = sanitize_svg(&svg);
                 let hash = digest(safe_svg.as_bytes());
                 let relative_path = format!("assets/diagram-{hash}.svg");
-                self.state.lock().map_err(|_| fmt::Error)?.generated.push((
-                    relative_path.clone(),
-                    "image/svg+xml".to_owned(),
-                    safe_svg,
-                ));
+                let mut state = self.state.lock().map_err(|_| fmt::Error)?;
+                if let Err(error) =
+                    state.insert_asset(relative_path.clone(), "image/svg+xml".to_owned(), safe_svg)
+                {
+                    let MermaidFailure::AssetConflict { path } = error;
+                    state.failure = Some(MermaidFailure::AssetConflict { path });
+                    return Err(fmt::Error);
+                }
+                drop(state);
                 write!(
                     output,
                     "<figure class=\"bard-diagram\"><img src=\"{relative_path}\" alt=\"Diagram\"></figure>"
@@ -975,6 +1016,7 @@ fn sanitize_html(html: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::panic::{AssertUnwindSafe, catch_unwind};
 
     fn request(source: &str) -> CompileRequest {
         CompileRequest {
@@ -1062,6 +1104,58 @@ mod tests {
                 .unwrap()
                 .contains("<svg")
         );
+    }
+
+    #[test]
+    fn poisoned_mermaid_adapter_state_is_reported_as_a_typed_error() {
+        let renderer = MermaidRenderer::new();
+        let panic = catch_unwind(AssertUnwindSafe(|| {
+            let _state = renderer.state.lock().unwrap();
+            panic!("poison the Mermaid renderer state for this regression test");
+        }));
+        assert!(panic.is_err());
+
+        let mut output = String::new();
+        let adapter_result = <MermaidRenderer as comrak::adapters::CodefenceRendererAdapter>::write(
+            &renderer,
+            &mut output,
+            "mermaid",
+            "",
+            "flowchart LR\n A --> B",
+            None,
+        );
+        assert!(adapter_result.is_err());
+        assert!(matches!(
+            renderer.finish(),
+            Err(BardError::MermaidRendererPoisoned)
+        ));
+    }
+
+    #[test]
+    fn conflicting_mermaid_asset_contents_propagate_after_rendering() {
+        let renderer = MermaidRenderer::new();
+        let mut state = renderer.state.lock().unwrap();
+        state
+            .insert_asset(
+                "assets/diagram-fixed.svg".to_owned(),
+                "image/svg+xml".to_owned(),
+                "<svg>first</svg>".to_owned(),
+            )
+            .unwrap();
+        state.failure = state
+            .insert_asset(
+                "assets/diagram-fixed.svg".to_owned(),
+                "image/svg+xml".to_owned(),
+                "<svg>conflict</svg>".to_owned(),
+            )
+            .err();
+        drop(state);
+
+        assert!(matches!(
+            renderer.finish(),
+            Err(BardError::MermaidAssetConflict { path })
+                if path == "assets/diagram-fixed.svg"
+        ));
     }
 
     #[test]
