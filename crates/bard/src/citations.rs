@@ -8,7 +8,7 @@ use hayagriva::{
     citationberg::{CitationFormat, Locale, LocaleCode, Style, StyleCategory, json::Item},
 };
 
-use crate::{BardError, CompileRequest, Diagnostic, digest, escape_html};
+use crate::{BardError, CompileRequest, Diagnostic, DiagnosticSeverity, digest, escape_html};
 
 const DEFAULT_STYLE: &str = "ieee";
 
@@ -40,9 +40,9 @@ impl PreparedCitations {
         &self.style_id
     }
 
-    pub(crate) fn apply(self, mut html: String) -> String {
+    pub(crate) fn apply(self, mut html: String) -> Result<String, BardError> {
         if self.citations.is_empty() {
-            return html;
+            return Ok(html);
         }
 
         let locales = locale_files();
@@ -51,21 +51,29 @@ impl PreparedCitations {
             let items = citation
                 .items
                 .iter()
-                .map(|item| {
-                    let entry = &self.entries[self.entry_indices[&item.key]];
+                .map(|item| -> Result<_, BardError> {
+                    let index =
+                        self.entry_indices
+                            .get(&item.key)
+                            .ok_or(BardError::CitationState(
+                                "citation key has no prepared index",
+                            ))?;
+                    let entry = self.entries.get(*index).ok_or(BardError::CitationState(
+                        "prepared citation index is out of range",
+                    ))?;
                     let locator = item
                         .locator
                         .as_ref()
                         .map(|(label, value)| SpecificLocator(*label, LocatorPayload::Str(value)));
-                    CitationItem::new(
+                    Ok(CitationItem::new(
                         entry,
                         locator,
                         None,
                         false,
                         citation_purpose(&self.style, item.suppress_author),
-                    )
+                    ))
                 })
-                .collect();
+                .collect::<Result<Vec<_>, BardError>>()?;
             driver.citation(CitationRequest::new(
                 items,
                 &self.style,
@@ -85,7 +93,7 @@ impl PreparedCitations {
             formatted
                 .citation
                 .write_buf(&mut content, BufWriteFormat::Html)
-                .expect("writing citation markup to a string cannot fail");
+                .map_err(BardError::CitationFormat)?;
             html = html.replace(
                 &citation.token,
                 &format!(
@@ -108,12 +116,12 @@ impl PreparedCitations {
                 if let Some(first_field) = item.first_field {
                     first_field
                         .write_buf(&mut output, BufWriteFormat::Html)
-                        .expect("writing bibliography markup to a string cannot fail");
+                        .map_err(BardError::CitationFormat)?;
                     output.push(' ');
                 }
                 item.content
                     .write_buf(&mut output, BufWriteFormat::Html)
-                    .expect("writing bibliography markup to a string cannot fail");
+                    .map_err(BardError::CitationFormat)?;
                 let safe_content = sanitize_citation_markup(&output[content_start..]);
                 output.truncate(content_start);
                 output.push_str(&safe_content);
@@ -123,7 +131,7 @@ impl PreparedCitations {
             html.push_str(&output);
         }
 
-        html
+        Ok(html)
     }
 }
 
@@ -229,7 +237,7 @@ pub(crate) fn prepare<'a>(
                     let (line, column) =
                         source_location(&text, open, source_start.line, source_start.column);
                     diagnostics.push(Diagnostic {
-                        severity: "error".to_owned(),
+                        severity: DiagnosticSeverity::Error,
                         code: "citation.unknown_key".to_owned(),
                         message: format!("citation key '{}' was not provided", item.key),
                         line: Some(line),
@@ -260,7 +268,11 @@ pub(crate) fn prepare<'a>(
             if entry_indices.contains_key(&item.key) {
                 continue;
             }
-            let reference = references[item.key.as_str()];
+            let reference = references
+                .get(item.key.as_str())
+                .ok_or(BardError::CitationState(
+                    "validated citation key is missing",
+                ))?;
             let mut csl_json = reference.csl_json.clone();
             let Some(object) = csl_json.as_object_mut() else {
                 return Err(BardError::Reference {

@@ -1,8 +1,11 @@
 use std::{
     collections::{BTreeMap, HashMap},
     fmt, fs,
-    path::{Path, PathBuf},
-    sync::Mutex,
+    path::{Component, Path, PathBuf},
+    sync::{
+        Mutex,
+        atomic::{AtomicU64, Ordering},
+    },
 };
 
 use comrak::{Arena, Options, nodes::NodeValue};
@@ -17,7 +20,11 @@ pub const SCHEMA_VERSION: u32 = 1;
 const MAX_SOURCE_BYTES: usize = 2_000_000;
 const MAX_OUTPUT_BYTES: usize = 20_000_000;
 const MAX_SVG_BYTES: usize = 8_000_000;
+const MAX_TITLE_CHARS: usize = 500;
+const MAX_IDENTIFIER_CHARS: usize = 200;
+const MAX_CITATION_STYLE_CHARS: usize = 120;
 const ARTICLE_CSS: &str = include_str!("../../../assets/bard/article.css");
+static NEXT_STAGING_ID: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -75,13 +82,20 @@ pub struct TocEntry {
 
 #[derive(Clone, Debug, Serialize)]
 pub struct Diagnostic {
-    pub severity: String,
+    pub severity: DiagnosticSeverity,
     pub code: String,
     pub message: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub line: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub column: Option<usize>,
+}
+
+#[derive(Clone, Copy, Debug, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DiagnosticSeverity {
+    Warning,
+    Error,
 }
 
 #[derive(Debug, Error)]
@@ -94,6 +108,14 @@ pub enum BardError {
     SourceTooLarge,
     #[error("document title must not be empty")]
     EmptyTitle,
+    #[error("{field} must not be empty")]
+    EmptyField { field: &'static str },
+    #[error("{field} exceeds the {max}-character limit")]
+    FieldTooLong { field: &'static str, max: usize },
+    #[error("citation_style must contain only lowercase ASCII letters, digits, and hyphens")]
+    InvalidCitationStyle,
+    #[error("reference '{key}' csl_json must be a JSON object")]
+    ReferenceNotObject { key: String },
     #[error("unsupported citation style: {0}")]
     CitationStyle(String),
     #[error("invalid CSL JSON for reference '{key}': {message}")]
@@ -102,15 +124,309 @@ pub enum BardError {
     OutputTooLarge,
     #[error("raw HTML is not allowed (line {line})")]
     RawHtml { line: usize },
-    #[error("Markdown formatter failed")]
-    Format,
-    #[error("failed to write generated file: {0}")]
-    Io(#[from] std::io::Error),
+    #[error("Markdown formatter failed: {0}")]
+    Format(#[source] fmt::Error),
+    #[error("formatting citations failed: {0}")]
+    CitationFormat(#[source] fmt::Error),
+    #[error("citation preparation invariant failed: {0}")]
+    CitationState(&'static str),
+    #[error("the embedded Syntect theme '{0}' is unavailable")]
+    SyntaxThemeMissing(&'static str),
+    #[error("generating Syntect CSS failed: {0}")]
+    SyntaxCss(#[source] syntect::Error),
+    #[error("Mermaid renderer state was poisoned")]
+    RendererStatePoisoned,
+    #[error("output persistence failed during {operation} at '{path}': {source}{rollback_note}", rollback_note = rollback.as_ref().map(|message| format!("; rollback also failed: {message}")).unwrap_or_default())]
+    OutputPersistence {
+        operation: &'static str,
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+        rollback: Option<String>,
+    },
+    #[error("generated file path is not a safe relative path: {0}")]
+    UnsafeGeneratedPath(String),
+    #[error("generated output contains duplicate path '{0}'")]
+    DuplicateGeneratedPath(String),
+    #[error("serializing compiler fingerprint inputs failed: {0}")]
+    Fingerprint(#[source] serde_json::Error),
+}
+
+struct BundleFile {
+    path: String,
+    media_type: String,
+    contents: String,
+    sha256: String,
+}
+
+struct OutputBundle {
+    files: Vec<BundleFile>,
+}
+
+impl OutputBundle {
+    fn new(files: Vec<(String, String, String)>) -> Result<Self, BardError> {
+        let mut sorted = BTreeMap::new();
+        let mut output_size = 0usize;
+        for (path, media_type, contents) in files {
+            validate_generated_path(&path)?;
+            if sorted
+                .insert(path.clone(), (media_type, contents))
+                .is_some()
+            {
+                return Err(BardError::DuplicateGeneratedPath(path));
+            }
+        }
+
+        let files = sorted
+            .into_iter()
+            .map(|(path, (media_type, contents))| {
+                output_size = output_size.saturating_add(contents.len());
+                BundleFile {
+                    path,
+                    media_type,
+                    sha256: digest(contents.as_bytes()),
+                    contents,
+                }
+            })
+            .collect::<Vec<_>>();
+        if output_size > MAX_OUTPUT_BYTES {
+            return Err(BardError::OutputTooLarge);
+        }
+        Ok(Self { files })
+    }
+
+    fn manifest_files(&self) -> Vec<GeneratedFile> {
+        self.files
+            .iter()
+            .map(|file| GeneratedFile {
+                path: file.path.clone(),
+                media_type: file.media_type.clone(),
+                sha256: file.sha256.clone(),
+            })
+            .collect()
+    }
+
+    fn persist(&self, output_dir: &Path) -> Result<(), BardError> {
+        fs::create_dir_all(output_dir)
+            .map_err(|source| output_io_error("create output directory", output_dir, source))?;
+        let mut staging = StagingDirectory::create(output_dir)?;
+        for file in &self.files {
+            let staged = staging.path.join("new").join(&file.path);
+            if let Some(parent) = staged.parent() {
+                fs::create_dir_all(parent).map_err(|source| {
+                    output_io_error("create staging directory", parent, source)
+                })?;
+            }
+            fs::write(&staged, file.contents.as_bytes())
+                .map_err(|source| output_io_error("write staged file", &staged, source))?;
+        }
+
+        let mut published = Vec::with_capacity(self.files.len());
+        let publication = (|| {
+            for file in &self.files {
+                ensure_output_parent(output_dir, Path::new(&file.path))?;
+                let target = output_dir.join(&file.path);
+                let staged = staging.path.join("new").join(&file.path);
+                let backup = match fs::symlink_metadata(&target) {
+                    Ok(metadata) if metadata.file_type().is_file() => {
+                        let backup = staging.path.join("backup").join(&file.path);
+                        if let Some(parent) = backup.parent() {
+                            fs::create_dir_all(parent).map_err(|source| {
+                                output_io_error("create backup directory", parent, source)
+                            })?;
+                        }
+                        fs::rename(&target, &backup).map_err(|source| {
+                            output_io_error("stage existing file", &target, source)
+                        })?;
+                        Some(backup)
+                    }
+                    Ok(_) => {
+                        return Err(output_io_error(
+                            "replace generated path",
+                            &target,
+                            std::io::Error::new(
+                                std::io::ErrorKind::InvalidInput,
+                                "target exists and is not a regular file",
+                            ),
+                        ));
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+                    Err(source) => {
+                        return Err(output_io_error("inspect generated path", &target, source));
+                    }
+                };
+                published.push(PublishedFile {
+                    target: target.clone(),
+                    backup,
+                    installed: false,
+                });
+                fs::rename(&staged, &target)
+                    .map_err(|source| output_io_error("publish generated file", &target, source))?;
+                published
+                    .last_mut()
+                    .expect("the publication record was just added")
+                    .installed = true;
+            }
+            Ok(())
+        })();
+
+        if let Err(mut error) = publication {
+            let rollback_failures = rollback_publication(&mut published);
+            if !rollback_failures.is_empty() {
+                staging.preserve = true;
+                error = error.with_rollback(rollback_failures.join("; "));
+            }
+            return Err(error);
+        }
+        Ok(())
+    }
+}
+
+impl BardError {
+    fn with_rollback(self, rollback: String) -> Self {
+        match self {
+            Self::OutputPersistence {
+                operation,
+                path,
+                source,
+                ..
+            } => Self::OutputPersistence {
+                operation,
+                path,
+                source,
+                rollback: Some(rollback),
+            },
+            other => other,
+        }
+    }
+}
+
+struct PublishedFile {
+    target: PathBuf,
+    backup: Option<PathBuf>,
+    installed: bool,
+}
+
+struct StagingDirectory {
+    path: PathBuf,
+    preserve: bool,
+}
+
+impl StagingDirectory {
+    fn create(output_dir: &Path) -> Result<Self, BardError> {
+        loop {
+            let id = NEXT_STAGING_ID.fetch_add(1, Ordering::Relaxed);
+            let path = output_dir.join(format!(".bard-stage-{}-{id}", std::process::id()));
+            match fs::create_dir(&path) {
+                Ok(()) => {
+                    return Ok(Self {
+                        path,
+                        preserve: false,
+                    });
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(source) => {
+                    return Err(output_io_error("create staging directory", &path, source));
+                }
+            }
+        }
+    }
+}
+
+impl Drop for StagingDirectory {
+    fn drop(&mut self) {
+        if !self.preserve {
+            let _ = fs::remove_dir_all(&self.path);
+        }
+    }
+}
+
+fn validate_generated_path(path: &str) -> Result<(), BardError> {
+    let relative = Path::new(path);
+    if relative.as_os_str().is_empty()
+        || relative.is_absolute()
+        || relative
+            .components()
+            .any(|component| !matches!(component, Component::Normal(_)))
+    {
+        return Err(BardError::UnsafeGeneratedPath(path.to_owned()));
+    }
+    Ok(())
+}
+
+fn ensure_output_parent(output_dir: &Path, relative_file: &Path) -> Result<(), BardError> {
+    let Some(parent) = relative_file.parent() else {
+        return Ok(());
+    };
+    let mut current = output_dir.to_path_buf();
+    for component in parent.components() {
+        let Component::Normal(name) = component else {
+            return Err(BardError::UnsafeGeneratedPath(
+                relative_file.to_string_lossy().into_owned(),
+            ));
+        };
+        current.push(name);
+        match fs::symlink_metadata(&current) {
+            Ok(metadata) if metadata.file_type().is_dir() => {}
+            Ok(_) => {
+                return Err(output_io_error(
+                    "create output directory",
+                    &current,
+                    std::io::Error::new(
+                        std::io::ErrorKind::InvalidInput,
+                        "path component exists and is not a directory",
+                    ),
+                ));
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                fs::create_dir(&current).map_err(|source| {
+                    output_io_error("create output directory", &current, source)
+                })?;
+            }
+            Err(source) => {
+                return Err(output_io_error(
+                    "inspect output directory",
+                    &current,
+                    source,
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn rollback_publication(published: &mut [PublishedFile]) -> Vec<String> {
+    let mut failures = Vec::new();
+    for entry in published.iter_mut().rev() {
+        if entry.installed
+            && let Err(error) = fs::remove_file(&entry.target)
+        {
+            failures.push(format!("remove '{}': {error}", entry.target.display()));
+        }
+        if let Some(backup) = &entry.backup
+            && let Err(error) = fs::rename(backup, &entry.target)
+        {
+            failures.push(format!(
+                "restore '{}' from '{}': {error}",
+                entry.target.display(),
+                backup.display()
+            ));
+        }
+    }
+    failures
+}
+
+fn output_io_error(operation: &'static str, path: &Path, source: std::io::Error) -> BardError {
+    BardError::OutputPersistence {
+        operation,
+        path: path.to_path_buf(),
+        source,
+        rollback: None,
+    }
 }
 
 pub fn compile(request: CompileRequest, output_dir: &Path) -> Result<Manifest, BardError> {
     validate_request(&request)?;
-    fs::create_dir_all(output_dir)?;
 
     let arena = Arena::new();
     let mut options = Options::default();
@@ -134,7 +450,7 @@ pub fn compile(request: CompileRequest, output_dir: &Path) -> Result<Manifest, B
     let mut diagnostics = Vec::new();
     let citations = citations::prepare(root, &request, &mut diagnostics)?;
 
-    let diagrams = MermaidRenderer::new(output_dir);
+    let diagrams = MermaidRenderer::new();
     let mut toc = Vec::new();
     let mut anchorizer = comrak::Anchorizer::new();
     let syntax_set = syntect::parsing::SyntaxSet::load_defaults_newlines();
@@ -146,7 +462,7 @@ pub fn compile(request: CompileRequest, output_dir: &Path) -> Result<Manifest, B
                 && syntax_set.find_syntax_by_token(language).is_none()
             {
                 diagnostics.push(Diagnostic {
-                    severity: "warning".to_owned(),
+                    severity: DiagnosticSeverity::Warning,
                     code: "code.unknown_language".to_owned(),
                     message: format!(
                         "unknown code language '{language}'; using the highlighter fallback"
@@ -161,7 +477,7 @@ pub fn compile(request: CompileRequest, output_dir: &Path) -> Result<Manifest, B
             let mut rendered = String::new();
             if let Err(error) = push_mathml(&mut rendered, parser, Default::default()) {
                 diagnostics.push(Diagnostic {
-                    severity: "error".to_owned(),
+                    severity: DiagnosticSeverity::Error,
                     code: "math.invalid".to_owned(),
                     message: error.to_string(),
                     line: Some(data.sourcepos.start.line),
@@ -199,16 +515,18 @@ pub fn compile(request: CompileRequest, output_dir: &Path) -> Result<Manifest, B
         },
     };
     let mut rendered_html = String::new();
-    comrak::html::format_document_with_plugins(root, &options, &mut rendered_html, &plugins)
-        .map_err(|_| BardError::Format)?;
+    let render_result =
+        comrak::html::format_document_with_plugins(root, &options, &mut rendered_html, &plugins);
+    let diagram_output = diagrams.finish()?;
+    render_result.map_err(BardError::Format)?;
     let citation_style_id = citations.style_id().to_owned();
-    let rendered_html = citations.apply(rendered_html);
+    let rendered_html = citations.apply(rendered_html)?;
     let safe_html = sanitize_html(&rendered_html);
     let safe_html = format!(
         "<article class=\"bard-article\" lang=\"{}\">{safe_html}</article>",
         request.locale
     );
-    let article_css = article_css();
+    let article_css = article_css()?;
     let mut files = vec![
         (
             "article.html".to_owned(),
@@ -221,30 +539,9 @@ pub fn compile(request: CompileRequest, output_dir: &Path) -> Result<Manifest, B
             article_css,
         ),
     ];
-    files.extend(diagrams.files());
-    files = files
-        .into_iter()
-        .map(|(path, media_type, contents)| (path, (media_type, contents)))
-        .collect::<BTreeMap<_, _>>()
-        .into_iter()
-        .map(|(path, (media_type, contents))| (path, media_type, contents))
-        .collect();
-
-    let output_size: usize = files.iter().map(|(_, _, content)| content.len()).sum();
-    if output_size > MAX_OUTPUT_BYTES {
-        return Err(BardError::OutputTooLarge);
-    }
-
-    let mut manifest_files = Vec::with_capacity(files.len());
-    for (relative_path, media_type, contents) in files {
-        let path = output_dir.join(&relative_path);
-        fs::write(&path, contents.as_bytes())?;
-        manifest_files.push(GeneratedFile {
-            path: relative_path,
-            media_type,
-            sha256: digest(contents.as_bytes()),
-        });
-    }
+    files.extend(diagram_output.files);
+    let bundle = OutputBundle::new(files)?;
+    let manifest_files = bundle.manifest_files();
 
     let fingerprint_input = serde_json::to_vec(&(
         SCHEMA_VERSION,
@@ -257,7 +554,9 @@ pub fn compile(request: CompileRequest, output_dir: &Path) -> Result<Manifest, B
         &request.references,
         &manifest_files,
     ))
-    .expect("serializing compiler fingerprint inputs cannot fail");
+    .map_err(BardError::Fingerprint)?;
+
+    bundle.persist(output_dir)?;
 
     Ok(Manifest {
         schema_version: SCHEMA_VERSION,
@@ -265,7 +564,7 @@ pub fn compile(request: CompileRequest, output_dir: &Path) -> Result<Manifest, B
         toc,
         diagnostics: diagnostics
             .into_iter()
-            .chain(diagrams.diagnostics())
+            .chain(diagram_output.diagnostics)
             .collect(),
         fingerprint: digest(&fingerprint_input),
     })
@@ -283,6 +582,55 @@ fn validate_request(request: &CompileRequest) -> Result<(), BardError> {
     }
     if request.document.title.trim().is_empty() {
         return Err(BardError::EmptyTitle);
+    }
+    check_max_chars("document.title", &request.document.title, MAX_TITLE_CHARS)?;
+    for (field, value) in [
+        ("document.slug", request.document.slug.as_deref()),
+        (
+            "document.revision_id",
+            request.document.revision_id.as_deref(),
+        ),
+    ] {
+        if let Some(value) = value {
+            check_max_chars(field, value, MAX_IDENTIFIER_CHARS)?;
+        }
+    }
+    if let Some(style) = &request.citation_style {
+        if style.is_empty() {
+            return Err(BardError::EmptyField {
+                field: "citation_style",
+            });
+        }
+        check_max_chars("citation_style", style, MAX_CITATION_STYLE_CHARS)?;
+        if !style
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+        {
+            return Err(BardError::InvalidCitationStyle);
+        }
+    }
+    for reference in &request.references {
+        for (field, value) in [
+            ("reference.key", reference.key.as_str()),
+            ("reference.revision_id", reference.revision_id.as_str()),
+        ] {
+            if value.is_empty() {
+                return Err(BardError::EmptyField { field });
+            }
+            check_max_chars(field, value, MAX_IDENTIFIER_CHARS)?;
+        }
+        if !reference.csl_json.is_object() {
+            return Err(BardError::ReferenceNotObject {
+                key: reference.key.clone(),
+            });
+        }
+    }
+    Ok(())
+}
+
+fn check_max_chars(field: &'static str, value: &str, max: usize) -> Result<(), BardError> {
+    if value.chars().count() > max {
+        return Err(BardError::FieldTooLong { field, max });
     }
     Ok(())
 }
@@ -303,19 +651,19 @@ fn digest(bytes: &[u8]) -> String {
     hex::encode(Sha256::digest(bytes))
 }
 
-fn article_css() -> String {
+fn article_css() -> Result<String, BardError> {
     let mut css = ARTICLE_CSS.to_owned();
     let themes = syntect::highlighting::ThemeSet::load_defaults();
     let theme = themes
         .themes
         .get("InspiredGitHub")
-        .expect("syntect's embedded InspiredGitHub theme is present");
+        .ok_or(BardError::SyntaxThemeMissing("InspiredGitHub"))?;
     let syntax_css =
         syntect::html::css_for_theme_with_class_style(theme, syntect::html::ClassStyle::Spaced)
-            .expect("the embedded syntect theme generates valid CSS");
+            .map_err(BardError::SyntaxCss)?;
     css.push_str("\n/* Pinned syntect InspiredGitHub syntax theme. */\n");
     css.push_str(&syntax_css);
-    css
+    Ok(css)
 }
 
 fn plain_text<'a>(node: &'a comrak::nodes::AstNode<'a>) -> String {
@@ -335,32 +683,36 @@ fn plain_text<'a>(node: &'a comrak::nodes::AstNode<'a>) -> String {
 }
 
 struct MermaidRenderer {
-    output_dir: PathBuf,
-    generated: Mutex<Vec<(String, String, String)>>,
-    diagnostics: Mutex<Vec<Diagnostic>>,
+    state: Mutex<MermaidState>,
+}
+
+#[derive(Default)]
+struct MermaidState {
+    generated: Vec<(String, String, String)>,
+    diagnostics: Vec<Diagnostic>,
+}
+
+struct DiagramOutput {
+    files: Vec<(String, String, String)>,
+    diagnostics: Vec<Diagnostic>,
 }
 
 impl MermaidRenderer {
-    fn new(output_dir: &Path) -> Self {
+    fn new() -> Self {
         Self {
-            output_dir: output_dir.to_path_buf(),
-            generated: Mutex::new(Vec::new()),
-            diagnostics: Mutex::new(Vec::new()),
+            state: Mutex::new(MermaidState::default()),
         }
     }
 
-    fn files(&self) -> Vec<(String, String, String)> {
-        self.generated
-            .lock()
-            .expect("diagram lock poisoned")
-            .clone()
-    }
-
-    fn diagnostics(&self) -> Vec<Diagnostic> {
-        self.diagnostics
-            .lock()
-            .expect("diagnostics lock poisoned")
-            .clone()
+    fn finish(self) -> Result<DiagramOutput, BardError> {
+        let state = self
+            .state
+            .into_inner()
+            .map_err(|_| BardError::RendererStatePoisoned)?;
+        Ok(DiagramOutput {
+            files: state.generated,
+            diagnostics: state.diagnostics,
+        })
     }
 }
 
@@ -379,11 +731,12 @@ impl comrak::adapters::CodefenceRendererAdapter for MermaidRenderer {
         ) {
             Ok(svg) => {
                 if svg.len() > MAX_SVG_BYTES {
-                    self.diagnostics
+                    self.state
                         .lock()
                         .map_err(|_| fmt::Error)?
+                        .diagnostics
                         .push(Diagnostic {
-                            severity: "error".to_owned(),
+                            severity: DiagnosticSeverity::Error,
                             code: "mermaid.output_too_large".to_owned(),
                             message: format!(
                                 "generated diagram exceeds the {MAX_SVG_BYTES}-byte limit"
@@ -396,12 +749,7 @@ impl comrak::adapters::CodefenceRendererAdapter for MermaidRenderer {
                 let safe_svg = sanitize_svg(&svg);
                 let hash = digest(safe_svg.as_bytes());
                 let relative_path = format!("assets/diagram-{hash}.svg");
-                let full_path = self.output_dir.join(&relative_path);
-                if let Some(parent) = full_path.parent() {
-                    fs::create_dir_all(parent).map_err(|_| fmt::Error)?;
-                }
-                fs::write(&full_path, safe_svg.as_bytes()).map_err(|_| fmt::Error)?;
-                self.generated.lock().map_err(|_| fmt::Error)?.push((
+                self.state.lock().map_err(|_| fmt::Error)?.generated.push((
                     relative_path.clone(),
                     "image/svg+xml".to_owned(),
                     safe_svg,
@@ -412,11 +760,12 @@ impl comrak::adapters::CodefenceRendererAdapter for MermaidRenderer {
                 )
             }
             Err(error) => {
-                self.diagnostics
+                self.state
                     .lock()
                     .map_err(|_| fmt::Error)?
+                    .diagnostics
                     .push(Diagnostic {
-                        severity: "error".to_owned(),
+                        severity: DiagnosticSeverity::Error,
                         code: "mermaid.invalid".to_owned(),
                         message: error.to_string(),
                         line: sourcepos.map(|span| span.start.line),
@@ -706,6 +1055,7 @@ mod tests {
         let html = fs::read_to_string(output.path().join("article.html")).unwrap();
 
         assert!(svg.path.starts_with("assets/diagram-"));
+        assert_eq!(svg.path, format!("assets/diagram-{}.svg", svg.sha256));
         assert!(html.contains(&format!("src=\"{}\"", svg.path)));
         assert!(
             fs::read_to_string(output.path().join(&svg.path))
