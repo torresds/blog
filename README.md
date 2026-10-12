@@ -68,12 +68,18 @@ Math, syntax highlighting, Mermaid diagrams, citations, and article styling are 
 - **Immutable history.** Revisions and compiled artifacts are append-only; publication advances an atomic pointer.
 - **Modular monolith.** Components communicate through explicit contracts, not separate services.
 
-## Roadmap
+## Milestones
 
-- [ ] **01 · Bard — compiler foundation:** Rust CLI and library, GFM parsing, diagnostics, and versioned compilation contract.
-- [ ] **02 · Bard — complete rendering:** Pre-render math, syntax highlighting, Pandoc-style citations, Mermaid SVG, and article CSS; validate output safety.
-- [ ] **03 · Librarian — content model:** PostgreSQL schema, bibliography, immutable revisions, and artifact records.
-- [ ] **04 · Herald — publication pipeline:** Invoke Bard, store generated assets in R2, and publish atomically.
-- [ ] **05 · Herald — public reading:** Astro article pages, localized routes, caching, SEO, feeds, and sitemap.
-- [ ] **06 · Atelier — authoring:** Markdown editor, preview, metadata, bibliography, revision history, and publication controls.
-- [ ] **07 · Release hardening:** GitHub OAuth allowlist, integration tests, performance benchmarks, backups, and Docker deployment
+- [x] **01. Bard compiler:** Rust library and CLI, CommonMark/GFM parsing, request validation, diagnostics, and versioned JSON contracts.
+- [x] **02. Bard rendering:** MathML, syntax highlighting, CSL citations, Mermaid SVG, HTML/SVG sanitization, reproducible output, and regression tests.
+- [ ] **03. Database schema:** PostgreSQL migrations, article identities, locale variants, foreign keys, and database constraints.
+- [ ] **04. Content revisions:** Immutable article revisions, versioned bibliography entries, metadata, and revision history.
+- [ ] **05. Publication records:** Compiled artifact metadata, publication pointers, transactional updates, and optimistic concurrency control.
+- [ ] **06. Herald backend:** Astro SSR setup, server-side routing, database integration, and article resolution.
+- [ ] **07. Article pages:** Localized URLs, article layouts, typography, navigation, responsive design, and accessibility.
+- [ ] **08. Content discovery:** Canonical URLs, SEO metadata, Open Graph, RSS/Atom feeds, sitemap, and HTTP caching.
+- [ ] **09. Compilation pipeline:** Bard execution, artifact validation, Cloudflare R2 uploads, and failure handling.
+- [ ] **10. Publication workflow:** Atomic publication activation, artifact retrieval, cache invalidation, and revision rollback.
+- [ ] **11. Atelier editor:** Private Astro/Svelte application, CodeMirror, Markdown preview, metadata editing, and bibliography management.
+- [ ] **12. Editorial workflow:** Draft revisions, revision history, compilation diagnostics, publishing controls, and GitHub OAuth allowlist.
+- [ ] **13. Deployment and validation:** Docker configuration, PostgreSQL backups, logging, integration tests, security checks, and performance benchmarks.
