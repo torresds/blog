@@ -9,9 +9,13 @@ Install pinned tools with `mise install`, then compile the example request:
 ```sh
 mise exec -- cargo run -p bard -- --output-dir /tmp/bard-output \
   < contracts/bard/v1/example.request.json
+mise exec -- cargo test --workspace
+mise exec -- cargo bench -p bard --bench representative
 ```
 
 The CLI reads one JSON request from stdin and writes one JSON manifest to stdout. Generated files go under the required `--output-dir`; paths in the manifest are relative to that directory. See `contracts/bard/v1/` for schemas and fixtures.
+
+The benchmark compiles a representative article with citations, math, highlighted code, a table, and a Mermaid diagram. It reports p50/p95 latency after warmup; compare results on the same machine and toolchain.
 
 ## Current support
 

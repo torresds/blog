@@ -88,36 +88,57 @@ impl PreparedCitations {
                 .expect("writing citation markup to a string cannot fail");
             html = html.replace(
                 &citation.token,
-                &format!("<span class=\"bard-citation\">{content}</span>"),
+                &format!(
+                    "<span class=\"bard-citation\">{}</span>",
+                    sanitize_citation_markup(&content)
+                ),
             );
         }
 
-        if let Some(bibliography) = rendered.bibliography {
-            if !bibliography.items.is_empty() {
-                let mut output = format!(
-                    "<section class=\"bard-bibliography\" aria-labelledby=\"bard-references\"><h2 id=\"bard-references\">{}</h2><div class=\"bard-bibliography-list\" role=\"list\">",
-                    self.bibliography_title
-                );
-                for item in bibliography.items {
-                    output.push_str("<div class=\"bard-bibliography-entry\" role=\"listitem\">");
-                    if let Some(first_field) = item.first_field {
-                        first_field
-                            .write_buf(&mut output, BufWriteFormat::Html)
-                            .expect("writing bibliography markup to a string cannot fail");
-                        output.push(' ');
-                    }
-                    item.content
+        if let Some(bibliography) = rendered.bibliography
+            && !bibliography.items.is_empty()
+        {
+            let mut output = format!(
+                "<section class=\"bard-bibliography\" aria-labelledby=\"bard-references\"><h2 id=\"bard-references\">{}</h2><div class=\"bard-bibliography-list\" role=\"list\">",
+                self.bibliography_title
+            );
+            for item in bibliography.items {
+                output.push_str("<div class=\"bard-bibliography-entry\" role=\"listitem\">");
+                let content_start = output.len();
+                if let Some(first_field) = item.first_field {
+                    first_field
                         .write_buf(&mut output, BufWriteFormat::Html)
                         .expect("writing bibliography markup to a string cannot fail");
-                    output.push_str("</div>");
+                    output.push(' ');
                 }
-                output.push_str("</div></section>");
-                html.push_str(&output);
+                item.content
+                    .write_buf(&mut output, BufWriteFormat::Html)
+                    .expect("writing bibliography markup to a string cannot fail");
+                let safe_content = sanitize_citation_markup(&output[content_start..]);
+                output.truncate(content_start);
+                output.push_str(&safe_content);
+                output.push_str("</div>");
             }
+            output.push_str("</div></section>");
+            html.push_str(&output);
         }
 
         html
     }
+}
+
+fn sanitize_citation_markup(html: &str) -> String {
+    let mut builder = ammonia::Builder::default();
+    builder
+        .tags(["a", "b", "em", "i", "span", "strong", "sub", "sup"].into())
+        .tag_attributes(
+            [
+                ("a", ["href", "title"].into_iter().collect()),
+                ("span", ["class"].into_iter().collect()),
+            ]
+            .into(),
+        );
+    builder.clean(html).to_string()
 }
 
 fn citation_purpose(
@@ -283,10 +304,8 @@ fn parse_cluster(body: &str) -> Option<Vec<ParsedCitationItem>> {
         let part = raw_item.trim();
         let (suppress_author, remainder) = if let Some(rest) = part.strip_prefix("-@") {
             (true, rest)
-        } else if let Some(rest) = part.strip_prefix('@') {
-            (false, rest)
         } else {
-            return None;
+            (false, part.strip_prefix('@')?)
         };
         let key_end = remainder
             .find([',', ' ', '\t', '\n', '\r'])

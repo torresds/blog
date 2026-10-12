@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "source": "# Referências em português\n\nA linguagem Rust tem documentação útil [@rust-book, pp. 10-12]. Um grupo relaciona segurança e sistemas [@rust-book; @rust-paper]. Veja também [-@rust-paper, sec. 2].\n\n| Recurso | Estado |\n| --- | --- |\n| MathML | $x^2$ |\n\n```rust\nfn olá() -> &'static str { \"seguro\" }\n```\n",
+  "locale": "pt-BR",
+  "document": {
+    "title": "Referências em português",
+    "slug": "referencias-em-portugues",
+    "revision_id": "golden-1"
+  },
+  "references": [
+    {
+      "key": "rust-book",
+      "revision_id": "book-1",
+      "csl_json": {
+        "type": "book",
+        "title": "The Rust Programming Language",
+        "author": [
+          { "family": "Klabnik", "given": "Steve" },
+          { "family": "Nichols", "given": "Carol" }
+        ],
+        "issued": { "date-parts": [[2023]] },
+        "publisher": "No Starch Press"
+      }
+    },
+    {
+      "key": "rust-paper",
+      "revision_id": "paper-1",
+      "csl_json": {
+        "type": "article-journal",
+        "title": "Fearless Concurrency in Practice",
+        "author": [{ "family": "Garcia", "given": "Ana" }],
+        "container-title": "Journal of Systems",
+        "volume": "12",
+        "issue": "3",
+        "page": "44-58",
+        "issued": { "date-parts": [[2024, 5]] }
+      }
+    }
+  ]
+}

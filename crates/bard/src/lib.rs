@@ -19,7 +19,7 @@ const MAX_OUTPUT_BYTES: usize = 20_000_000;
 const MAX_SVG_BYTES: usize = 8_000_000;
 const ARTICLE_CSS: &str = include_str!("../../../assets/bard/article.css");
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct CompileRequest {
     pub schema_version: u32,
@@ -32,7 +32,7 @@ pub struct CompileRequest {
     pub references: Vec<Reference>,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Document {
     pub title: String,
@@ -42,7 +42,7 @@ pub struct Document {
     pub revision_id: Option<String>,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Reference {
     pub key: String,
@@ -632,6 +632,7 @@ mod tests {
             schema_version: 1,
             source: source.to_owned(),
             locale: "pt-BR".to_owned(),
+            citation_style: None,
             document: Document {
                 title: "Artigo de teste".to_owned(),
                 slug: Some("artigo-de-teste".to_owned()),
