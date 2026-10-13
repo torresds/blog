@@ -1,2 +1,6 @@
 target/
 node_modules/
+.env
+.env.*
+!.env.example
+packages/librarian/dist/

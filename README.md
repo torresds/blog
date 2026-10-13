@@ -61,6 +61,10 @@ Math, syntax highlighting, Mermaid diagrams, citations, and article styling are 
 | Media & generated assets | **Cloudflare R2** |
 | Deployment | **Docker**, one application container |
 
+## Local PostgreSQL
+
+If `.env` does not exist, copy the example with `cp -n .env.example .env`. Then run `npm install` and `npm run db:up`. Apply the schema with `npm run db:migrate`. Run the real PostgreSQL integration suite with `npm run test:integration`; it recreates only the separate `_test` database before testing. Stop PostgreSQL without deleting its data using `npm run db:stop`. See [Librarian database development](packages/librarian/README.md) for the full command list.
+
 
 ## Design principles
 
@@ -72,7 +76,7 @@ Math, syntax highlighting, Mermaid diagrams, citations, and article styling are 
 
 - [x] **01. Bard compiler:** Rust library and CLI, CommonMark/GFM parsing, request validation, diagnostics, and versioned JSON contracts.
 - [x] **02. Bard rendering:** MathML, syntax highlighting, CSL citations, Mermaid SVG, HTML/SVG sanitization, reproducible output, and regression tests.
-- [ ] **03. Database schema:** PostgreSQL migrations, article identities, locale variants, foreign keys, and database constraints.
+- [x] **03. Database schema:** PostgreSQL migrations, article identities, locale variants, foreign keys, and database constraints.
 - [ ] **04. Content revisions:** Immutable article revisions, versioned bibliography entries, metadata, and revision history.
 - [ ] **05. Publication records:** Compiled artifact metadata, publication pointers, transactional updates, and optimistic concurrency control.
 - [ ] **06. Herald backend:** Astro SSR setup, server-side routing, database integration, and article resolution.

@@ -1,0 +1,16 @@
+{
+  "name": "blog",
+  "private": true,
+  "workspaces": [
+    "packages/librarian"
+  ],
+  "scripts": {
+    "db:up": "docker compose up -d postgres",
+    "db:stop": "docker compose stop postgres",
+    "db:migrate": "npm --workspace @torresds/librarian run migrate:dev",
+    "db:test:reset": "npm --workspace @torresds/librarian run testdb:reset",
+    "db:test:migrate": "npm --workspace @torresds/librarian run migrate:test",
+    "test:integration": "npm run db:test:reset && npm run db:test:migrate && npm run db:test:migrate && npm --workspace @torresds/librarian run test:integration",
+    "typecheck": "npm --workspace @torresds/librarian run typecheck"
+  }
+}
