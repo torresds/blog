@@ -1,6 +1,6 @@
 import { spawnSync } from 'node:child_process';
 import { resolve } from 'node:path';
-import { parseSafeTestDatabaseUrls } from '../src/test-database.js';
+import { parseSafeTestDatabaseUrls } from './test-database.js';
 
 parseSafeTestDatabaseUrls();
 

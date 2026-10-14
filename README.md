@@ -77,8 +77,8 @@ If `.env` does not exist, copy the example with `cp -n .env.example .env`. Then 
 - [x] **01. Bard compiler:** Rust library and CLI, CommonMark/GFM parsing, request validation, diagnostics, and versioned JSON contracts.
 - [x] **02. Bard rendering:** MathML, syntax highlighting, CSL citations, Mermaid SVG, HTML/SVG sanitization, reproducible output, and regression tests.
 - [x] **03. Database schema:** PostgreSQL migrations, article identities, locale variants, foreign keys, and database constraints.
-- [ ] **04. Content revisions:** Immutable article revisions, versioned bibliography entries, metadata, and revision history.
-- [ ] **05. Publication records:** Compiled artifact metadata, publication pointers, transactional updates, and optimistic concurrency control.
+- [x] **04. Content revisions:** Immutable article revisions, versioned bibliography entries, metadata, and revision history.
+- [x] **05. Publication records:** Compiled artifact metadata, publication pointers, transactional updates, and optimistic concurrency control.
 - [ ] **06. Herald backend:** Astro SSR setup, server-side routing, database integration, and article resolution.
 - [ ] **07. Article pages:** Localized URLs, article layouts, typography, navigation, responsive design, and accessibility.
 - [ ] **08. Content discovery:** Canonical URLs, SEO metadata, Open Graph, RSS/Atom feeds, sitemap, and HTTP caching.

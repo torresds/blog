@@ -11,6 +11,13 @@
     "db:test:reset": "npm --workspace @torresds/librarian run testdb:reset",
     "db:test:migrate": "npm --workspace @torresds/librarian run migrate:test",
     "test:integration": "npm run db:test:reset && npm run db:test:migrate && npm run db:test:migrate && npm --workspace @torresds/librarian run test:integration",
-    "typecheck": "npm --workspace @torresds/librarian run typecheck"
+    "test": "npm --workspace @torresds/librarian run test",
+    "test:unit": "npm --workspace @torresds/librarian run test:unit",
+    "test:contracts": "npm --workspace @torresds/librarian run test:contracts",
+    "test:architecture": "npm --workspace @torresds/librarian run test:architecture",
+    "test:performance": "npm run db:test:reset && npm run db:test:migrate && npm --workspace @torresds/librarian run perf:seed && npm --workspace @torresds/librarian run test:performance",
+    "test:coverage": "npm --workspace @torresds/librarian run test:coverage",
+    "typecheck": "npm --workspace @torresds/librarian run typecheck",
+    "build": "npm --workspace @torresds/librarian run build"
   }
 }

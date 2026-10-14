@@ -9,25 +9,43 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./postgres": {
+      "types": "./dist/postgres.d.ts",
+      "import": "./dist/postgres.js"
     }
   },
   "scripts": {
     "build": "tsc --project tsconfig.build.json",
     "typecheck": "tsc --project tsconfig.json --noEmit",
+    "test": "vitest run --project unit --project contracts --project architecture",
+    "test:unit": "vitest run --project unit",
+    "test:integration": "node --env-file=../../.env ../../node_modules/vitest/vitest.mjs run --project integration",
+    "test:contracts": "vitest run --project contracts",
+    "test:architecture": "vitest run --project architecture",
+    "test:performance": "node --env-file=../../.env ../../node_modules/vitest/vitest.mjs run --project performance",
+    "perf:seed": "node --env-file=../../.env --import tsx scripts/seed-performance.ts",
+    "test:coverage": "vitest run --project unit --project contracts --project architecture --coverage",
     "migrate:dev": "node --env-file=../../.env ../../node_modules/node-pg-migrate/bin/node-pg-migrate.js up --migrations-dir migrations --database-url-var DATABASE_URL --verbose=false",
     "migrate:test": "node --env-file=../../.env --import tsx scripts/migrate-test.ts",
     "testdb:reset": "node --env-file=../../.env --import tsx scripts/reset-test-database.ts",
-    "test:integration": "node --env-file=../../.env --import tsx --test test/*.test.ts",
-    "test:package-import": "npm run build && node --test test/package-import.test.mjs"
+    "test:package-import": "npm run build && vitest run --project architecture"
   },
   "dependencies": {
+    "@citation-js/core": "^0.9.0",
+    "@citation-js/plugin-bibtex": "^0.9.0",
+    "kysely": "^0.29.6",
     "node-pg-migrate": "9.0.0",
-    "pg": "8.23.1"
+    "pg": "8.23.1",
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@types/node": "24.10.1",
     "@types/pg": "8.15.6",
+    "@vitest/coverage-v8": "^5.0.4",
+    "ajv": "^8.20.0",
     "tsx": "4.23.15",
-    "typescript": "5.9.3"
+    "typescript": "5.9.3",
+    "vitest": "^5.0.4"
   }
 }

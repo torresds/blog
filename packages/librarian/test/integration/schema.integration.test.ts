@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
-import test from 'node:test';
+import { afterAll, describe, it } from 'vitest';
 import type { Pool, PoolClient } from 'pg';
-import { createTestPool } from '../src/test-database.js';
+import { createTestPool } from '../../scripts/test-database.js';
 
 const pool: Pool = createTestPool();
 
@@ -151,9 +151,9 @@ async function expectMutationRejection(
   await expectSqlState(client.query(`DELETE FROM ${table} WHERE ${idColumn} = $1`, [id]), '55000');
 }
 
-test('PostgreSQL schema and constraints', async (t) => {
-  try {
-    await t.test('fresh migrations create the complete schema and migration record', async () => {
+describe('PostgreSQL schema and constraints', () => {
+  afterAll(async () => { await pool.end(); });
+    it('fresh migrations create the complete schema and migration record', async () => {
       const result = await pool.query<{ table_name: string }>(`
         SELECT table_name FROM information_schema.tables
         WHERE table_schema = current_schema() AND table_type = 'BASE TABLE'
@@ -162,7 +162,7 @@ test('PostgreSQL schema and constraints', async (t) => {
       for (const name of [
         'posts', 'post_locales', 'post_revisions', 'tags', 'post_revision_tags',
         'references', 'reference_revisions', 'article_artifacts',
-        'artifact_reference_revisions', 'post_publications', 'publication_events', 'pgmigrations',
+        'artifact_reference_revisions', 'post_publications', 'publication_events', 'published_articles', 'pgmigrations',
       ]) {
         assert.ok(names.has(name), `expected table ${name}`);
       }
@@ -174,6 +174,9 @@ test('PostgreSQL schema and constraints', async (t) => {
       for (const name of ['003_editing_head_integrity', '004_finalize_snapshots']) {
         assert.ok(applied.has(name), `expected incremental migration ${name}`);
       }
+      for (const name of ['005_reference_editing_head', '006_published_projection', '007_publication_transitions']) {
+        assert.ok(applied.has(name), `expected new migration ${name}`);
+      }
       const constraints = await pool.query<{ conname: string }>(`
         SELECT conname FROM pg_constraint
         WHERE connamespace = current_schema()::regnamespace
@@ -183,6 +186,8 @@ test('PostgreSQL schema and constraints', async (t) => {
         'post_locales_head_pair_check', 'post_locales_head_revision_exact_fk',
         'post_revisions_locale_number_key', 'post_revisions_locale_number_id_key',
         'artifact_reference_revisions_exact_revision_fk',
+        'references_head_revision_exact_fk', 'published_articles_locale_slug_key',
+        'publication_events_complete_transition_check',
       ]) {
         assert.ok(constraintNames.has(name), `expected constraint ${name}`);
       }
@@ -195,12 +200,13 @@ test('PostgreSQL schema and constraints', async (t) => {
         'article_artifacts_post_locale_created_at_idx',
         'artifact_reference_revisions_reference_revision_idx',
         'publication_events_post_locale_created_at_idx',
+        'published_articles_locale_published_at_idx', 'published_articles_tags_gin_idx',
       ]) {
         assert.ok(indexNames.has(name), `expected index ${name}`);
       }
     });
 
-    await t.test('locale identities, locale constraints, and duplicate rejection', async () => {
+    it('locale identities, locale constraints, and duplicate rejection', async () => {
       await clearDatabase();
       const postId = await createPost();
       const pt = await createLocale(postId, 'pt-BR');
@@ -210,7 +216,7 @@ test('PostgreSQL schema and constraints', async (t) => {
       await expectSqlState(createLocale(postId, 'fr-FR'), '23514');
     });
 
-    await t.test('initial revision can become a locale editing head', async () => {
+    it('initial revision can become a locale editing head', async () => {
       await clearDatabase();
       const postId = await createPost();
       const localeId = await createLocale(postId);
@@ -240,7 +246,7 @@ test('PostgreSQL schema and constraints', async (t) => {
       );
     });
 
-    await t.test('head and parent revisions cannot cross locales or skip sequence', async () => {
+    it('head and parent revisions cannot cross locales or skip sequence', async () => {
       await clearDatabase();
       const postId = await createPost();
       const firstLocale = await createLocale(postId, 'pt-BR');
@@ -273,7 +279,7 @@ test('PostgreSQL schema and constraints', async (t) => {
       await expectSqlState(createRevision(firstLocale, 3, secondLocaleRevisionTwo), '23514');
     });
 
-    await t.test('revision and artifact associations finalize atomically', async () => {
+    it('revision and artifact associations finalize atomically', async () => {
       await clearDatabase();
       const client = await pool.connect();
       let postId = '';
@@ -383,7 +389,7 @@ test('PostgreSQL schema and constraints', async (t) => {
       assert.ok(postId);
     });
 
-    await t.test('revision content and JSON constraints are enforced', async () => {
+    it('revision content and JSON constraints are enforced', async () => {
       await clearDatabase();
       const localeId = await createLocale(await createPost());
       await expectSqlState(
@@ -403,41 +409,41 @@ test('PostgreSQL schema and constraints', async (t) => {
       );
     });
 
-    await t.test('immutable records reject updates and deletes while inserts work', async (t2) => {
+    it('immutable records reject updates and deletes while inserts work', async () => {
       await clearDatabase();
       const rows = await fixture();
       const client = await pool.connect();
       try {
-        await t2.test('post_revisions', () => expectMutationRejection(
+        await expectMutationRejection(
           client, 'post_revisions', 'id', rows.revisionId,
           'UPDATE post_revisions SET title = \'Changed\' WHERE id = $1',
-        ));
-        await t2.test('post_revision_tags', () => expectMutationRejection(
+        );
+        await expectMutationRejection(
           client, 'post_revision_tags', 'post_revision_id', rows.revisionId,
           'UPDATE post_revision_tags SET tag_id = tag_id WHERE post_revision_id = $1',
-        ));
-        await t2.test('reference_revisions', () => expectMutationRejection(
+        );
+        await expectMutationRejection(
           client, 'reference_revisions', 'id', rows.referenceRevisionId,
           'UPDATE reference_revisions SET csl_json = csl_json WHERE id = $1',
-        ));
-        await t2.test('article_artifacts', () => expectMutationRejection(
+        );
+        await expectMutationRejection(
           client, 'article_artifacts', 'id', rows.artifactId,
           'UPDATE article_artifacts SET html = html WHERE id = $1',
-        ));
-        await t2.test('artifact_reference_revisions', () => expectMutationRejection(
+        );
+        await expectMutationRejection(
           client, 'artifact_reference_revisions', 'artifact_id', rows.artifactId,
           'UPDATE artifact_reference_revisions SET reference_id = reference_id WHERE artifact_id = $1',
-        ));
-        await t2.test('publication_events', () => expectMutationRejection(
+        );
+        await expectMutationRejection(
           client, 'publication_events', 'id', rows.eventId,
           'UPDATE publication_events SET event_type = event_type WHERE id = $1',
-        ));
+        );
       } finally {
         client.release();
       }
     });
 
-    await t.test('tag slugs, citation keys, and bibliography relationships are constrained', async () => {
+    it('tag slugs, citation keys, and bibliography relationships are constrained', async () => {
       await clearDatabase();
       const rows = await fixture();
       await expectSqlState(pool.query("INSERT INTO tags(slug) VALUES ('rust')"), '23505');
@@ -483,7 +489,7 @@ test('PostgreSQL schema and constraints', async (t) => {
       }
     });
 
-    await t.test('artifact and publication pointers must match locale and revision', async () => {
+    it('artifact and publication pointers must match locale and revision', async () => {
       await clearDatabase();
       const postId = await createPost();
       const localeOne = await createLocale(postId, 'pt-BR');
@@ -537,7 +543,7 @@ test('PostgreSQL schema and constraints', async (t) => {
       );
     });
 
-    await t.test('publication events validate event type and referenced records', async () => {
+    it('publication events validate event type and referenced records', async () => {
       await clearDatabase();
       const postId = await createPost();
       const localeId = await createLocale(postId);
@@ -560,7 +566,7 @@ test('PostgreSQL schema and constraints', async (t) => {
       );
     });
 
-    await t.test('concurrent duplicate locale creation has one winner', async () => {
+    it('concurrent duplicate locale creation has one winner', async () => {
       await clearDatabase();
       const postId = await createPost();
       const outcomes = await Promise.allSettled([
@@ -576,7 +582,4 @@ test('PostgreSQL schema and constraints', async (t) => {
       );
       assert.equal(count.rows[0]!.count, 1);
     });
-  } finally {
-    await pool.end();
-  }
 });

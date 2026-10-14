@@ -1,5 +1,5 @@
 import { Pool } from 'pg';
-import { assertResetServerIdentity, parseSafeTestDatabaseUrls } from '../src/test-database.js';
+import { assertResetServerIdentity, parseSafeTestDatabaseUrls } from './test-database.js';
 
 const { test, testName, target } = parseSafeTestDatabaseUrls();
 const admin = new URL(test);

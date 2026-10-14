@@ -1,13 +1,13 @@
 import assert from 'node:assert/strict';
-import test from 'node:test';
-import { assertResetServerIdentity, parseSafeTestDatabaseUrls } from '../src/test-database.js';
+import { it } from 'vitest';
+import { assertResetServerIdentity, parseSafeTestDatabaseUrls } from '../../scripts/test-database.js';
 
 const safeEnvironment = {
   DATABASE_URL: 'postgres://local:secret@127.0.0.1:5432/blog_dev',
   TEST_DATABASE_URL: 'postgres://local:secret@127.0.0.1:5432/blog_test',
 };
 
-test('test database configuration is isolated and local before destructive use', () => {
+it('test database configuration is isolated and local before destructive use', () => {
   assert.equal(parseSafeTestDatabaseUrls(safeEnvironment).testName, 'blog_test');
   assert.equal(parseSafeTestDatabaseUrls({
     ...safeEnvironment,
@@ -83,7 +83,7 @@ test('test database configuration is isolated and local before destructive use',
   );
 });
 
-test('reset server identity must match the safe local administrative connection', () => {
+it('reset server identity must match the safe local administrative connection', () => {
   const target = { host: '127.0.0.1', port: 5432, database: 'blog_test' };
   assert.doesNotThrow(() => assertResetServerIdentity(
     { database: 'postgres', address: '127.0.0.1', port: 5432 }, target,
